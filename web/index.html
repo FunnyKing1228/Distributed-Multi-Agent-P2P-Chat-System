@@ -103,25 +103,25 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Ro
         <input id="input-name" type="text" placeholder="Enter your name..." maxlength="30">
       </div>
     </header>
-    <div class="section-title">AI Persona (Step 4)</div>
+    <div class="section-title">AI Persona</div>
     <div class="section-body">
       <div class="field">
         <label>AI Name</label>
-        <input id="ai-name" type="text" placeholder="e.g. Jarvis" disabled>
+        <input id="ai-name" type="text" placeholder="e.g. Jarvis" maxlength="30">
       </div>
       <div class="field">
         <label>Personality</label>
-        <textarea id="ai-style" rows="3" placeholder="e.g. Sarcastic but helpful..." disabled></textarea>
+        <textarea id="ai-style" rows="3" placeholder="e.g. Sarcastic but helpful..."></textarea>
       </div>
       <div class="field">
         <label>Ollama Model</label>
-        <select id="ai-model" disabled>
+        <select id="ai-model">
           <option value="deepseek-r1:8b">deepseek-r1:8b</option>
           <option value="llama3">llama3</option>
         </select>
       </div>
     </div>
-    <button id="btn-force-reply" disabled>Force Reply</button>
+    <button id="btn-force-reply">Force Reply</button>
     <footer>
       Peers connected: <span id="peer-count">0</span>
     </footer>

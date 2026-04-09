@@ -12,6 +12,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/FunnyKing1228/Distributed-Multi-Agent-P2P-Chat-System/internal/ai"
 	"github.com/FunnyKing1228/Distributed-Multi-Agent-P2P-Chat-System/internal/clock"
 	"github.com/FunnyKing1228/Distributed-Multi-Agent-P2P-Chat-System/internal/crypto"
 	"github.com/FunnyKing1228/Distributed-Multi-Agent-P2P-Chat-System/internal/p2p"
@@ -23,7 +24,6 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-// hub fans out messages to every connected WebSocket client.
 type hub struct {
 	mu      sync.RWMutex
 	clients map[*websocket.Conn]struct{}
@@ -39,7 +39,6 @@ func (h *hub) broadcast(data []byte) {
 	}
 }
 
-// wsEnvelope is the JSON shape shared between server and browser.
 type wsEnvelope struct {
 	Type        string            `json:"type"`
 	ID          string            `json:"id,omitempty"`
@@ -50,6 +49,9 @@ type wsEnvelope struct {
 	VectorClock map[string]uint64 `json:"vector_clock,omitempty"`
 	Self        bool              `json:"self,omitempty"`
 	Count       int               `json:"count,omitempty"`
+	AIName      string            `json:"ai_name,omitempty"`
+	AIStyle     string            `json:"ai_style,omitempty"`
+	AIModel     string            `json:"ai_model,omitempty"`
 }
 
 func main() {
@@ -83,7 +85,54 @@ func main() {
 		prevHash string
 	)
 
-	// Relay P2P → WebSocket clients
+	// signAndPublish creates, signs, publishes, and echoes an AI or human message.
+	signAndPublish := func(senderName, content string, isAI bool) {
+		sendMu.Lock()
+		vc.Increment(peerID)
+		snap := vc.Snapshot()
+
+		msg := types.NewMessage(peerID, senderName, content, snap, prevHash, isAI)
+		sigData, err := msg.SignableBytes()
+		if err != nil {
+			sendMu.Unlock()
+			log.Printf("signable: %v", err)
+			return
+		}
+		sig, err := identity.Sign(sigData)
+		if err != nil {
+			sendMu.Unlock()
+			log.Printf("sign: %v", err)
+			return
+		}
+		msg.Signature = sig
+		prevHash, _ = msg.Hash()
+		sendMu.Unlock()
+
+		if err := room.Publish(msg); err != nil {
+			log.Printf("publish: %v", err)
+			return
+		}
+
+		echo := wsEnvelope{
+			Type: "chat", ID: msg.ID, SenderID: peerID,
+			SenderName: senderName, Content: content,
+			IsAI: isAI, VectorClock: snap, Self: true,
+		}
+		data, _ := json.Marshal(echo)
+		h.broadcast(data)
+	}
+
+	// ── AI modules ──
+	orchestrator := ai.NewOrchestrator(func(name, content string) {
+		log.Printf("[AI] %s says: %s", name, content)
+		signAndPublish(name, content, true)
+	})
+
+	batcher := ai.NewBatcher(func(batch []ai.ChatMessage) {
+		orchestrator.Process(batch)
+	})
+
+	// Relay P2P → WebSocket + feed AI batcher
 	go func() {
 		for msg := range room.Messages {
 			vc.Merge(msg.VectorClock)
@@ -95,6 +144,12 @@ func main() {
 			}
 			data, _ := json.Marshal(env)
 			h.broadcast(data)
+
+			batcher.Add(ai.ChatMessage{
+				SenderName: msg.SenderName,
+				Content:    msg.Content,
+				IsAI:       msg.IsAI,
+			})
 		}
 	}()
 
@@ -139,48 +194,33 @@ func main() {
 
 			switch env.Type {
 			case "chat":
-				sendMu.Lock()
-				vc.Increment(peerID)
-				snap := vc.Snapshot()
+				signAndPublish(env.SenderName, env.Content, false)
 
-				msg := types.NewMessage(peerID, env.SenderName, env.Content, snap, prevHash, false)
-				sigData, err := msg.SignableBytes()
-				if err != nil {
-					sendMu.Unlock()
-					log.Printf("signable: %v", err)
-					continue
-				}
-				sig, err := identity.Sign(sigData)
-				if err != nil {
-					sendMu.Unlock()
-					log.Printf("sign: %v", err)
-					continue
-				}
-				msg.Signature = sig
-				prevHash, _ = msg.Hash()
-				sendMu.Unlock()
+				batcher.Add(ai.ChatMessage{
+					SenderName: env.SenderName,
+					Content:    env.Content,
+					IsAI:       false,
+				})
 
-				if err := room.Publish(msg); err != nil {
-					log.Printf("publish: %v", err)
-					continue
-				}
+			case "persona":
+				orchestrator.SetPersona(ai.Persona{
+					Name:  env.AIName,
+					Style: env.AIStyle,
+					Model: env.AIModel,
+				})
+				log.Printf("[AI] Persona updated: name=%q style=%q model=%q",
+					env.AIName, env.AIStyle, env.AIModel)
 
-				echo := wsEnvelope{
-					Type: "chat", ID: msg.ID, SenderID: peerID,
-					SenderName: env.SenderName, Content: env.Content,
-					VectorClock: snap, Self: true,
-				}
-				data, _ := json.Marshal(echo)
-				h.broadcast(data)
+			case "force_reply":
+				log.Println("[AI] Force reply requested")
+				batcher.ForceFlush()
 			}
 		}
 	})
 
-	// Serve embedded frontend
 	http.Handle("/", http.FileServer(http.FS(web.Content)))
 
 	addr := fmt.Sprintf(":%d", *port)
 	log.Printf("Web UI → http://localhost%s", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
-

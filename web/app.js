@@ -10,15 +10,16 @@
   const $toggle   = document.getElementById("btn-toggle");
   const $sidebar  = document.getElementById("sidebar");
   const $force    = document.getElementById("btn-force-reply");
+  const $aiName   = document.getElementById("ai-name");
+  const $aiStyle  = document.getElementById("ai-style");
+  const $aiModel  = document.getElementById("ai-model");
 
   let ws = null;
   let myPeerID = "";
 
-  // Sorted message list (chat messages only, ordered by vector clock).
   const messages = [];
 
   // ── Vector Clock comparison ──
-  // Returns -1 (a before b), +1 (a after b), or 0 (equal / concurrent).
   function compareVC(a, b) {
     if (!a || !b) return 0;
     const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
@@ -30,7 +31,6 @@
     }
     if (aLess && !bLess) return -1;
     if (bLess && !aLess) return 1;
-    // Equal or concurrent — use clock sum as tiebreaker
     const sumA = Object.values(a).reduce((s, v) => s + v, 0);
     const sumB = Object.values(b).reduce((s, v) => s + v, 0);
     if (sumA !== sumB) return sumA - sumB;
@@ -41,12 +41,39 @@
   $toggle.addEventListener("click", () => $sidebar.classList.toggle("hidden"));
 
   // ── Name persistence ──
-  const savedName = localStorage.getItem("dmapc-name") || "";
-  $name.value = savedName;
+  $name.value  = localStorage.getItem("dmapc-name") || "";
   $name.addEventListener("input", () => {
     localStorage.setItem("dmapc-name", $name.value);
     updateSendState();
   });
+
+  // ── Persona persistence + sync ──
+  $aiName.value  = localStorage.getItem("dmapc-ai-name")  || "";
+  $aiStyle.value = localStorage.getItem("dmapc-ai-style") || "";
+  const savedModel = localStorage.getItem("dmapc-ai-model");
+  if (savedModel) $aiModel.value = savedModel;
+
+  let personaTimer = null;
+  function onPersonaChange() {
+    localStorage.setItem("dmapc-ai-name",  $aiName.value);
+    localStorage.setItem("dmapc-ai-style", $aiStyle.value);
+    localStorage.setItem("dmapc-ai-model", $aiModel.value);
+    clearTimeout(personaTimer);
+    personaTimer = setTimeout(sendPersona, 400);
+  }
+  $aiName.addEventListener("input",  onPersonaChange);
+  $aiStyle.addEventListener("input", onPersonaChange);
+  $aiModel.addEventListener("change", onPersonaChange);
+
+  function sendPersona() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      type:     "persona",
+      ai_name:  $aiName.value.trim(),
+      ai_style: $aiStyle.value.trim(),
+      ai_model: $aiModel.value,
+    }));
+  }
 
   function updateSendState() {
     const ready = ws && ws.readyState === WebSocket.OPEN && $name.value.trim() !== "";
@@ -63,6 +90,7 @@
       $status.textContent = "Connected";
       $status.style.color = "#4caf50";
       updateSendState();
+      sendPersona();
     });
 
     ws.addEventListener("close", () => {
@@ -84,10 +112,8 @@
 
   // ── Insert a chat message in vector-clock order ──
   function insertChat(msg) {
-    // Deduplicate by message ID
     if (msg.id && messages.some(m => m.id === msg.id)) return;
 
-    // Find insertion index by scanning backwards (most messages append at end)
     let idx = messages.length;
     for (let i = messages.length - 1; i >= 0; i--) {
       if (compareVC(messages[i].vector_clock, msg.vector_clock) <= 0) {
@@ -120,6 +146,7 @@
     const meta = document.createElement("div");
     meta.className = "meta";
     meta.textContent = isSelf ? "You" : (msg.sender_name || msg.sender_id.slice(0, 12));
+    if (isAI) meta.textContent += " 🤖";
     wrapper.appendChild(meta);
 
     const bubble = document.createElement("div");
@@ -133,12 +160,10 @@
   function appendSystem(text) {
     const wrapper = document.createElement("div");
     wrapper.className = "msg system";
-
     const bubble = document.createElement("div");
     bubble.className = "bubble";
     bubble.textContent = text;
     wrapper.appendChild(bubble);
-
     $chat.appendChild(wrapper);
     $chat.scrollTop = $chat.scrollHeight;
 
@@ -152,7 +177,6 @@
     const content = $input.value.trim();
     const name    = $name.value.trim();
     if (!content || !name || !ws || ws.readyState !== WebSocket.OPEN) return;
-
     ws.send(JSON.stringify({ type: "chat", sender_name: name, content: content }));
     $input.value = "";
     $input.focus();
@@ -163,7 +187,7 @@
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   });
 
-  // ── Force Reply placeholder (Step 4) ──
+  // ── Force Reply ──
   $force.addEventListener("click", () => {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: "force_reply" }));
