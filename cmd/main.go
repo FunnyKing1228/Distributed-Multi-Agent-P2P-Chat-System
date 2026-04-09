@@ -12,6 +12,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/FunnyKing1228/Distributed-Multi-Agent-P2P-Chat-System/internal/clock"
 	"github.com/FunnyKing1228/Distributed-Multi-Agent-P2P-Chat-System/internal/crypto"
 	"github.com/FunnyKing1228/Distributed-Multi-Agent-P2P-Chat-System/internal/p2p"
 	"github.com/FunnyKing1228/Distributed-Multi-Agent-P2P-Chat-System/internal/types"
@@ -77,21 +78,15 @@ func main() {
 	h := &hub{clients: make(map[*websocket.Conn]struct{})}
 
 	var (
-		vcMu     sync.Mutex
-		vc       = make(map[string]uint64)
+		vc       = clock.New()
+		sendMu   sync.Mutex
 		prevHash string
 	)
 
 	// Relay P2P → WebSocket clients
 	go func() {
 		for msg := range room.Messages {
-			vcMu.Lock()
-			for k, v := range msg.VectorClock {
-				if v > vc[k] {
-					vc[k] = v
-				}
-			}
-			vcMu.Unlock()
+			vc.Merge(msg.VectorClock)
 
 			env := wsEnvelope{
 				Type: "chat", ID: msg.ID, SenderID: msg.SenderID,
@@ -144,24 +139,26 @@ func main() {
 
 			switch env.Type {
 			case "chat":
-				vcMu.Lock()
-				vc[peerID]++
-				snap := copyVC(vc)
-				vcMu.Unlock()
+				sendMu.Lock()
+				vc.Increment(peerID)
+				snap := vc.Snapshot()
 
 				msg := types.NewMessage(peerID, env.SenderName, env.Content, snap, prevHash, false)
 				sigData, err := msg.SignableBytes()
 				if err != nil {
+					sendMu.Unlock()
 					log.Printf("signable: %v", err)
 					continue
 				}
 				sig, err := identity.Sign(sigData)
 				if err != nil {
+					sendMu.Unlock()
 					log.Printf("sign: %v", err)
 					continue
 				}
 				msg.Signature = sig
 				prevHash, _ = msg.Hash()
+				sendMu.Unlock()
 
 				if err := room.Publish(msg); err != nil {
 					log.Printf("publish: %v", err)
@@ -187,10 +184,3 @@ func main() {
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
-func copyVC(src map[string]uint64) map[string]uint64 {
-	dst := make(map[string]uint64, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
