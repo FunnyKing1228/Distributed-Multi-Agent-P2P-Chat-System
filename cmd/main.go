@@ -1,79 +1,196 @@
 package main
 
 import (
-	"bufio"
 	"context"
+	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
-	"os"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/gorilla/websocket"
 
 	"github.com/FunnyKing1228/Distributed-Multi-Agent-P2P-Chat-System/internal/crypto"
 	"github.com/FunnyKing1228/Distributed-Multi-Agent-P2P-Chat-System/internal/p2p"
 	"github.com/FunnyKing1228/Distributed-Multi-Agent-P2P-Chat-System/internal/types"
+	"github.com/FunnyKing1228/Distributed-Multi-Agent-P2P-Chat-System/web"
 )
 
-func main() {
-	ctx := context.Background()
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
 
-	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Print("Enter your name: ")
-	scanner.Scan()
-	name := scanner.Text()
+// hub fans out messages to every connected WebSocket client.
+type hub struct {
+	mu      sync.RWMutex
+	clients map[*websocket.Conn]struct{}
+}
+
+func (h *hub) add(c *websocket.Conn)    { h.mu.Lock(); h.clients[c] = struct{}{}; h.mu.Unlock() }
+func (h *hub) remove(c *websocket.Conn) { h.mu.Lock(); delete(h.clients, c); h.mu.Unlock() }
+func (h *hub) broadcast(data []byte) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for c := range h.clients {
+		_ = c.WriteMessage(websocket.TextMessage, data)
+	}
+}
+
+// wsEnvelope is the JSON shape shared between server and browser.
+type wsEnvelope struct {
+	Type        string            `json:"type"`
+	ID          string            `json:"id,omitempty"`
+	SenderID    string            `json:"sender_id,omitempty"`
+	SenderName  string            `json:"sender_name,omitempty"`
+	Content     string            `json:"content,omitempty"`
+	IsAI        bool              `json:"is_ai,omitempty"`
+	VectorClock map[string]uint64 `json:"vector_clock,omitempty"`
+	Self        bool              `json:"self,omitempty"`
+	Count       int               `json:"count,omitempty"`
+}
+
+func main() {
+	port := flag.Int("port", 8080, "HTTP port for the Web UI")
+	flag.Parse()
+
+	ctx := context.Background()
 
 	identity, err := crypto.GenerateIdentity()
 	if err != nil {
-		log.Fatalf("generate identity: %v", err)
+		log.Fatalf("identity: %v", err)
 	}
-	log.Printf("PeerID: %s", identity.PeerID)
+	peerID := identity.PeerID.String()
+	log.Printf("PeerID: %s", peerID)
 
 	node, err := p2p.NewNode(ctx, identity.PrivKey)
 	if err != nil {
-		log.Fatalf("create node: %v", err)
+		log.Fatalf("p2p node: %v", err)
 	}
 
 	room, err := p2p.JoinChatRoom(ctx, node.Host)
 	if err != nil {
-		log.Fatalf("join chat room: %v", err)
+		log.Fatalf("chat room: %v", err)
 	}
 
+	h := &hub{clients: make(map[*websocket.Conn]struct{})}
+
+	var (
+		vcMu     sync.Mutex
+		vc       = make(map[string]uint64)
+		prevHash string
+	)
+
+	// Relay P2P → WebSocket clients
 	go func() {
 		for msg := range room.Messages {
-			fmt.Printf("\n[%s] %s\n> ", msg.SenderName, msg.Content)
+			vcMu.Lock()
+			for k, v := range msg.VectorClock {
+				if v > vc[k] {
+					vc[k] = v
+				}
+			}
+			vcMu.Unlock()
+
+			env := wsEnvelope{
+				Type: "chat", ID: msg.ID, SenderID: msg.SenderID,
+				SenderName: msg.SenderName, Content: msg.Content,
+				IsAI: msg.IsAI, VectorClock: msg.VectorClock, Self: false,
+			}
+			data, _ := json.Marshal(env)
+			h.broadcast(data)
 		}
 	}()
 
-	peerID := identity.PeerID.String()
-	vc := make(map[string]uint64)
-	prevHash := ""
-
-	fmt.Println("Chat started. Type messages and press Enter. (Ctrl+C to quit)")
-	fmt.Print("> ")
-	for scanner.Scan() {
-		text := scanner.Text()
-		if text == "" {
-			fmt.Print("> ")
-			continue
+	// Periodically push peer count
+	go func() {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				env := wsEnvelope{Type: "peers", Count: node.PeerCount()}
+				data, _ := json.Marshal(env)
+				h.broadcast(data)
+			case <-ctx.Done():
+				return
+			}
 		}
+	}()
 
-		vc[peerID]++
-		msg := types.NewMessage(peerID, name, text, vc, prevHash, false)
-
-		data, err := msg.SignableBytes()
+	// WebSocket endpoint
+	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			log.Printf("signable bytes: %v", err)
-			continue
+			log.Printf("ws upgrade: %v", err)
+			return
 		}
-		sig, err := identity.Sign(data)
-		if err != nil {
-			log.Printf("sign: %v", err)
-			continue
-		}
-		msg.Signature = sig
-		prevHash, _ = msg.Hash()
+		h.add(conn)
+		defer func() { h.remove(conn); conn.Close() }()
 
-		if err := room.Publish(msg); err != nil {
-			log.Printf("publish: %v", err)
+		welcome, _ := json.Marshal(wsEnvelope{Type: "system", Content: "Connected. PeerID: " + peerID})
+		_ = conn.WriteMessage(websocket.TextMessage, welcome)
+
+		for {
+			_, raw, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var env wsEnvelope
+			if json.Unmarshal(raw, &env) != nil {
+				continue
+			}
+
+			switch env.Type {
+			case "chat":
+				vcMu.Lock()
+				vc[peerID]++
+				snap := copyVC(vc)
+				vcMu.Unlock()
+
+				msg := types.NewMessage(peerID, env.SenderName, env.Content, snap, prevHash, false)
+				sigData, err := msg.SignableBytes()
+				if err != nil {
+					log.Printf("signable: %v", err)
+					continue
+				}
+				sig, err := identity.Sign(sigData)
+				if err != nil {
+					log.Printf("sign: %v", err)
+					continue
+				}
+				msg.Signature = sig
+				prevHash, _ = msg.Hash()
+
+				if err := room.Publish(msg); err != nil {
+					log.Printf("publish: %v", err)
+					continue
+				}
+
+				echo := wsEnvelope{
+					Type: "chat", ID: msg.ID, SenderID: peerID,
+					SenderName: env.SenderName, Content: env.Content,
+					VectorClock: snap, Self: true,
+				}
+				data, _ := json.Marshal(echo)
+				h.broadcast(data)
+			}
 		}
-		fmt.Print("> ")
+	})
+
+	// Serve embedded frontend
+	http.Handle("/", http.FileServer(http.FS(web.Content)))
+
+	addr := fmt.Sprintf(":%d", *port)
+	log.Printf("Web UI → http://localhost%s", addr)
+	log.Fatal(http.ListenAndServe(addr, nil))
+}
+
+func copyVC(src map[string]uint64) map[string]uint64 {
+	dst := make(map[string]uint64, len(src))
+	for k, v := range src {
+		dst[k] = v
 	}
+	return dst
 }
