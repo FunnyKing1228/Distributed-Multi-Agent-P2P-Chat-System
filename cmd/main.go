@@ -15,6 +15,11 @@ import (
 func main() {
 	ctx := context.Background()
 
+	scanner := bufio.NewScanner(os.Stdin)
+	fmt.Print("Enter your name: ")
+	scanner.Scan()
+	name := scanner.Text()
+
 	identity, err := crypto.GenerateIdentity()
 	if err != nil {
 		log.Fatalf("generate identity: %v", err)
@@ -31,17 +36,11 @@ func main() {
 		log.Fatalf("join chat room: %v", err)
 	}
 
-	// Print incoming messages from other peers
 	go func() {
 		for msg := range room.Messages {
 			fmt.Printf("\n[%s] %s\n> ", msg.SenderName, msg.Content)
 		}
 	}()
-
-	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Print("Enter your name: ")
-	scanner.Scan()
-	name := scanner.Text()
 
 	peerID := identity.PeerID.String()
 	vc := make(map[string]uint64)
