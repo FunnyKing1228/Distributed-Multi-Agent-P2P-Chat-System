@@ -30,18 +30,25 @@ type Persona struct {
 	Model string `json:"model"`
 }
 
-// Orchestrator manages Ollama inference with persona-driven system prompts
-// and implements the Reasoning-to-Silence pattern.
+// Orchestrator manages Ollama inference with persona-driven system prompts,
+// long-term memory injection, and the Reasoning-to-Silence pattern.
 type Orchestrator struct {
-	mu      sync.RWMutex
-	persona Persona
-	history []ChatMessage
-	onReply func(name, content string)
+	mu       sync.RWMutex
+	persona  Persona
+	history  []ChatMessage
+	memory   *MemoryStore
+	numCtx   int
+	onReply  func(name, content string)
 }
 
-func NewOrchestrator(onReply func(name, content string)) *Orchestrator {
+func NewOrchestrator(persona Persona, memory *MemoryStore, numCtx int, onReply func(name, content string)) *Orchestrator {
+	if numCtx <= 0 {
+		numCtx = 4096
+	}
 	return &Orchestrator{
-		persona: Persona{Name: "AI", Style: "friendly and casual", Model: "deepseek-r1:8b"},
+		persona: persona,
+		memory:  memory,
+		numCtx:  numCtx,
 		onReply: onReply,
 	}
 }
@@ -66,18 +73,7 @@ func (o *Orchestrator) GetPersona() Persona {
 	return o.persona
 }
 
-// AddToHistory appends a message to the sliding context window.
-func (o *Orchestrator) AddToHistory(msg ChatMessage) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.history = append(o.history, msg)
-	if len(o.history) > maxHistory {
-		o.history = o.history[len(o.history)-maxHistory:]
-	}
-}
-
 // Process is called by the Batcher when a trigger fires.
-// newMessages are appended to the history, then the full context is sent to Ollama.
 func (o *Orchestrator) Process(newMessages []ChatMessage) {
 	o.mu.Lock()
 	o.history = append(o.history, newMessages...)
@@ -87,16 +83,22 @@ func (o *Orchestrator) Process(newMessages []ChatMessage) {
 	history := make([]ChatMessage, len(o.history))
 	copy(history, o.history)
 	persona := o.persona
+	numCtx := o.numCtx
 	o.mu.Unlock()
 
 	if len(history) == 0 {
 		return
 	}
 
-	systemPrompt := buildSystemPrompt(persona)
+	memorySection := ""
+	if o.memory != nil {
+		memorySection = o.memory.AsPromptSection()
+	}
+
+	systemPrompt := buildSystemPrompt(persona) + memorySection
 	userPrompt := buildUserPrompt(history)
 
-	raw, err := callOllama(persona.Model, systemPrompt, userPrompt)
+	raw, err := callOllamaWithCtx(persona.Model, systemPrompt, userPrompt, numCtx)
 	if err != nil {
 		log.Printf("[AI] Ollama error: %v", err)
 		return
@@ -115,6 +117,47 @@ func (o *Orchestrator) Process(newMessages []ChatMessage) {
 	o.mu.Unlock()
 
 	o.onReply(persona.Name, cleaned)
+
+	// Background: extract memories from this exchange
+	if o.memory != nil {
+		go o.extractMemories(persona.Model, history, cleaned, numCtx)
+	}
+}
+
+func (o *Orchestrator) extractMemories(model string, history []ChatMessage, aiResponse string, numCtx int) {
+	var b strings.Builder
+	last := history
+	if len(last) > 10 {
+		last = last[len(last)-10:]
+	}
+	for _, m := range last {
+		fmt.Fprintf(&b, "%s: %s\n", m.SenderName, m.Content)
+	}
+	fmt.Fprintf(&b, "[AI replied]: %s\n", aiResponse)
+
+	sysPrompt := `You are a memory extraction assistant. From the conversation below, extract 0-3 key facts worth remembering about the participants (names, preferences, relationships, events). Output each fact on its own line starting with "- ". If nothing is worth remembering, output exactly: NONE`
+
+	raw, err := callOllamaWithCtx(model, sysPrompt, b.String(), numCtx)
+	if err != nil {
+		log.Printf("[Memory] extraction error: %v", err)
+		return
+	}
+
+	cleaned := strings.TrimSpace(thinkRe.ReplaceAllString(raw, ""))
+	if strings.TrimSpace(strings.ToUpper(cleaned)) == "NONE" || cleaned == "" {
+		return
+	}
+
+	for _, line := range strings.Split(cleaned, "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimPrefix(line, "- ")
+		line = strings.TrimPrefix(line, "* ")
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.EqualFold(line, "NONE") {
+			o.memory.Add(line)
+			log.Printf("[Memory] stored: %s", line)
+		}
+	}
 }
 
 func buildSystemPrompt(p Persona) string {
@@ -144,17 +187,22 @@ func buildUserPrompt(history []ChatMessage) string {
 	return b.String()
 }
 
-// ── Ollama HTTP call ──
+// ── Ollama HTTP ──
 
 type ollamaRequest struct {
-	Model    string           `json:"model"`
-	Messages []ollamaMessage  `json:"messages"`
-	Stream   bool             `json:"stream"`
+	Model    string          `json:"model"`
+	Messages []ollamaMessage `json:"messages"`
+	Stream   bool            `json:"stream"`
+	Options  *ollamaOptions  `json:"options,omitempty"`
 }
 
 type ollamaMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+}
+
+type ollamaOptions struct {
+	NumCtx int `json:"num_ctx,omitempty"`
 }
 
 type ollamaResponse struct {
@@ -163,17 +211,22 @@ type ollamaResponse struct {
 	} `json:"message"`
 }
 
-func callOllama(model, systemPrompt, userPrompt string) (string, error) {
-	body, err := json.Marshal(ollamaRequest{
+func callOllamaWithCtx(model, systemPrompt, userPrompt string, numCtx int) (string, error) {
+	req := ollamaRequest{
 		Model: model,
 		Messages: []ollamaMessage{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userPrompt},
 		},
 		Stream: false,
-	})
+	}
+	if numCtx > 0 {
+		req.Options = &ollamaOptions{NumCtx: numCtx}
+	}
+
+	body, err := json.Marshal(req)
 	if err != nil {
-		return "", fmt.Errorf("marshal request: %w", err)
+		return "", fmt.Errorf("marshal: %w", err)
 	}
 
 	resp, err := ollamaClient.Post(ollamaURL, "application/json", bytes.NewReader(body))
@@ -189,7 +242,7 @@ func callOllama(model, systemPrompt, userPrompt string) (string, error) {
 
 	var result ollamaResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decode response: %w", err)
+		return "", fmt.Errorf("decode: %w", err)
 	}
 	return result.Message.Content, nil
 }

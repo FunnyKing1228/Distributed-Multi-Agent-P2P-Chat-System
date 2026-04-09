@@ -14,8 +14,6 @@ import (
 	"github.com/FunnyKing1228/Distributed-Multi-Agent-P2P-Chat-System/internal/types"
 )
 
-const topicName = "ntu-chat-room"
-
 // ChatRoom wraps a GossipSub topic with signature-verified message delivery.
 type ChatRoom struct {
 	topic    *pubsub.Topic
@@ -25,8 +23,9 @@ type ChatRoom struct {
 	ctx      context.Context
 }
 
-// JoinChatRoom creates a GossipSub instance, joins the topic, and starts the read loop.
-func JoinChatRoom(ctx context.Context, h host.Host) (*ChatRoom, error) {
+// JoinChatRoom creates a GossipSub instance, joins a room-specific topic, and starts the read loop.
+func JoinChatRoom(ctx context.Context, h host.Host, roomCode string) (*ChatRoom, error) {
+	topicName := "dmapc-room-" + roomCode
 	ps, err := pubsub.NewGossipSub(ctx, h)
 	if err != nil {
 		return nil, fmt.Errorf("create gossipsub: %w", err)
@@ -39,6 +38,7 @@ func JoinChatRoom(ctx context.Context, h host.Host) (*ChatRoom, error) {
 	if err != nil {
 		return nil, fmt.Errorf("subscribe to %q: %w", topicName, err)
 	}
+	log.Printf("[PubSub] Joined room %q (topic: %s)", roomCode, topicName)
 
 	cr := &ChatRoom{
 		topic:    topic,

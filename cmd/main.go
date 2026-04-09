@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"sync"
@@ -20,9 +22,9 @@ import (
 	"github.com/FunnyKing1228/Distributed-Multi-Agent-P2P-Chat-System/web"
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
+// ── Types ──
+
+var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 
 type hub struct {
 	mu      sync.RWMutex
@@ -49,111 +51,161 @@ type wsEnvelope struct {
 	VectorClock map[string]uint64 `json:"vector_clock,omitempty"`
 	Self        bool              `json:"self,omitempty"`
 	Count       int               `json:"count,omitempty"`
-	AIName      string            `json:"ai_name,omitempty"`
-	AIStyle     string            `json:"ai_style,omitempty"`
-	AIModel     string            `json:"ai_model,omitempty"`
+	PeerID      string            `json:"peer_id,omitempty"`
+	// Setup fields
+	Room        string `json:"room,omitempty"`
+	AIName      string `json:"ai_name,omitempty"`
+	AIStyle     string `json:"ai_style,omitempty"`
+	AIModel     string `json:"ai_model,omitempty"`
+	MemoryLimit int    `json:"memory_limit,omitempty"`
+	NumCtx      int    `json:"num_ctx,omitempty"`
 }
 
-func main() {
-	port := flag.Int("port", 8080, "HTTP port for the Web UI")
-	flag.Parse()
+type modelInfo struct {
+	Name    string `json:"name"`
+	Params  string `json:"params"`
+	RAM     string `json:"ram"`
+	Desc    string `json:"desc"`
+}
 
-	ctx := context.Background()
+var recommendedModels = []modelInfo{
+	{"deepseek-r1:1.5b", "1.5B", "~1.5 GB", "Fastest, has <think> reasoning"},
+	{"deepseek-r1:8b", "8B", "~5 GB", "Best balance — recommended"},
+	{"deepseek-r1:14b", "14B", "~9 GB", "Highest quality, slower"},
+	{"llama3:8b", "8B", "~5 GB", "Strong conversational ability"},
+	{"gemma2:2b", "2B", "~2 GB", "Google, lightweight and fast"},
+	{"phi3:mini", "3.8B", "~3 GB", "Microsoft, good reasoning"},
+}
+
+// ── App state (initialized lazily on "setup" WS message) ──
+
+type appState struct {
+	mu       sync.Mutex
+	ready    bool
+	done     chan struct{} // closed once ready
+	ctx      context.Context
+	hub      *hub
+	identity *crypto.Identity
+	peerID   string
+	node     *p2p.Node
+	room     *p2p.ChatRoom
+	vc       *clock.VectorClock
+	sendMu   sync.Mutex
+	prevHash string
+	batcher  *ai.Batcher
+	orch     *ai.Orchestrator
+	memStore *ai.MemoryStore
+}
+
+func (s *appState) signAndPublish(senderName, content string, isAI bool) {
+	s.sendMu.Lock()
+	s.vc.Increment(s.peerID)
+	snap := s.vc.Snapshot()
+
+	msg := types.NewMessage(s.peerID, senderName, content, snap, s.prevHash, isAI)
+	sigData, _ := msg.SignableBytes()
+	sig, _ := s.identity.Sign(sigData)
+	msg.Signature = sig
+	s.prevHash, _ = msg.Hash()
+	s.sendMu.Unlock()
+
+	if err := s.room.Publish(msg); err != nil {
+		log.Printf("publish: %v", err)
+		return
+	}
+
+	echo := wsEnvelope{
+		Type: "chat", ID: msg.ID, SenderID: s.peerID,
+		SenderName: senderName, Content: content,
+		IsAI: isAI, VectorClock: snap, Self: true,
+	}
+	data, _ := json.Marshal(echo)
+	s.hub.broadcast(data)
+}
+
+func (s *appState) init(env wsEnvelope) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.ready {
+		return nil
+	}
 
 	identity, err := crypto.GenerateIdentity()
 	if err != nil {
-		log.Fatalf("identity: %v", err)
+		return fmt.Errorf("identity: %w", err)
 	}
-	peerID := identity.PeerID.String()
-	log.Printf("PeerID: %s", peerID)
+	s.identity = identity
+	s.peerID = identity.PeerID.String()
 
-	node, err := p2p.NewNode(ctx, identity.PrivKey)
+	node, err := p2p.NewNode(s.ctx, identity.PrivKey)
 	if err != nil {
-		log.Fatalf("p2p node: %v", err)
+		return fmt.Errorf("p2p node: %w", err)
 	}
+	s.node = node
 
-	room, err := p2p.JoinChatRoom(ctx, node.Host)
+	roomCode := env.Room
+	if roomCode == "" {
+		roomCode = "default"
+	}
+	room, err := p2p.JoinChatRoom(s.ctx, node.Host, roomCode)
 	if err != nil {
-		log.Fatalf("chat room: %v", err)
+		return fmt.Errorf("join room: %w", err)
+	}
+	s.room = room
+	s.vc = clock.New()
+
+	memLimit := env.MemoryLimit
+	if memLimit <= 0 {
+		memLimit = 50
+	}
+	aiName := env.AIName
+	if aiName == "" {
+		aiName = "AI"
 	}
 
-	h := &hub{clients: make(map[*websocket.Conn]struct{})}
+	memStore, err := ai.NewMemoryStore(aiName, memLimit)
+	if err != nil {
+		log.Printf("WARN: memory store: %v", err)
+	}
+	s.memStore = memStore
 
-	var (
-		vc       = clock.New()
-		sendMu   sync.Mutex
-		prevHash string
-	)
-
-	// signAndPublish creates, signs, publishes, and echoes an AI or human message.
-	signAndPublish := func(senderName, content string, isAI bool) {
-		sendMu.Lock()
-		vc.Increment(peerID)
-		snap := vc.Snapshot()
-
-		msg := types.NewMessage(peerID, senderName, content, snap, prevHash, isAI)
-		sigData, err := msg.SignableBytes()
-		if err != nil {
-			sendMu.Unlock()
-			log.Printf("signable: %v", err)
-			return
-		}
-		sig, err := identity.Sign(sigData)
-		if err != nil {
-			sendMu.Unlock()
-			log.Printf("sign: %v", err)
-			return
-		}
-		msg.Signature = sig
-		prevHash, _ = msg.Hash()
-		sendMu.Unlock()
-
-		if err := room.Publish(msg); err != nil {
-			log.Printf("publish: %v", err)
-			return
-		}
-
-		echo := wsEnvelope{
-			Type: "chat", ID: msg.ID, SenderID: peerID,
-			SenderName: senderName, Content: content,
-			IsAI: isAI, VectorClock: snap, Self: true,
-		}
-		data, _ := json.Marshal(echo)
-		h.broadcast(data)
+	persona := ai.Persona{Name: aiName, Style: env.AIStyle, Model: env.AIModel}
+	if persona.Style == "" {
+		persona.Style = "friendly and casual"
+	}
+	if persona.Model == "" {
+		persona.Model = "deepseek-r1:8b"
 	}
 
-	// ── AI modules ──
-	orchestrator := ai.NewOrchestrator(func(name, content string) {
+	s.orch = ai.NewOrchestrator(persona, memStore, env.NumCtx, func(name, content string) {
 		log.Printf("[AI] %s says: %s", name, content)
-		signAndPublish(name, content, true)
+		s.signAndPublish(name, content, true)
 	})
 
-	batcher := ai.NewBatcher(func(batch []ai.ChatMessage) {
-		orchestrator.Process(batch)
+	s.batcher = ai.NewBatcher(func(batch []ai.ChatMessage) {
+		s.orch.Process(batch)
 	})
 
-	// Relay P2P → WebSocket + feed AI batcher
+	// P2P → WebSocket relay
 	go func() {
 		for msg := range room.Messages {
-			vc.Merge(msg.VectorClock)
-
+			s.vc.Merge(msg.VectorClock)
 			env := wsEnvelope{
 				Type: "chat", ID: msg.ID, SenderID: msg.SenderID,
 				SenderName: msg.SenderName, Content: msg.Content,
 				IsAI: msg.IsAI, VectorClock: msg.VectorClock, Self: false,
 			}
 			data, _ := json.Marshal(env)
-			h.broadcast(data)
+			s.hub.broadcast(data)
 
-			batcher.Add(ai.ChatMessage{
-				SenderName: msg.SenderName,
-				Content:    msg.Content,
-				IsAI:       msg.IsAI,
+			s.batcher.Add(ai.ChatMessage{
+				SenderName: msg.SenderName, Content: msg.Content, IsAI: msg.IsAI,
 			})
 		}
 	}()
 
-	// Periodically push peer count
+	// Peer count ticker
 	go func() {
 		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
@@ -162,25 +214,49 @@ func main() {
 			case <-ticker.C:
 				env := wsEnvelope{Type: "peers", Count: node.PeerCount()}
 				data, _ := json.Marshal(env)
-				h.broadcast(data)
-			case <-ctx.Done():
+				s.hub.broadcast(data)
+			case <-s.ctx.Done():
 				return
 			}
 		}
 	}()
 
-	// WebSocket endpoint
+	s.ready = true
+	close(s.done)
+	log.Printf("Room %q joined — ready to chat", roomCode)
+	return nil
+}
+
+// ── main ──
+
+func main() {
+	port := flag.Int("port", 8080, "HTTP port")
+	flag.Parse()
+
+	state := &appState{
+		ctx:  context.Background(),
+		hub:  &hub{clients: make(map[*websocket.Conn]struct{})},
+		done: make(chan struct{}),
+	}
+
+	// ── Ollama proxy APIs (work before setup) ──
+
+	http.HandleFunc("/api/ollama/status", handleOllamaStatus)
+	http.HandleFunc("/api/models", handleModels)
+	http.HandleFunc("/api/models/pull", handleModelPull)
+	http.HandleFunc("/api/models/recommended", handleRecommended)
+	http.HandleFunc("/api/memory", state.handleMemory)
+
+	// ── WebSocket ──
+
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			log.Printf("ws upgrade: %v", err)
 			return
 		}
-		h.add(conn)
-		defer func() { h.remove(conn); conn.Close() }()
-
-		welcome, _ := json.Marshal(wsEnvelope{Type: "system", Content: "Connected. PeerID: " + peerID})
-		_ = conn.WriteMessage(websocket.TextMessage, welcome)
+		state.hub.add(conn)
+		defer func() { state.hub.remove(conn); conn.Close() }()
 
 		for {
 			_, raw, err := conn.ReadMessage()
@@ -193,27 +269,31 @@ func main() {
 			}
 
 			switch env.Type {
-			case "chat":
-				signAndPublish(env.SenderName, env.Content, false)
+			case "setup":
+				if err := state.init(env); err != nil {
+					errMsg, _ := json.Marshal(wsEnvelope{Type: "error", Content: err.Error()})
+					_ = conn.WriteMessage(websocket.TextMessage, errMsg)
+					continue
+				}
+				ready, _ := json.Marshal(wsEnvelope{Type: "ready", PeerID: state.peerID})
+				_ = conn.WriteMessage(websocket.TextMessage, ready)
 
-				batcher.Add(ai.ChatMessage{
-					SenderName: env.SenderName,
-					Content:    env.Content,
-					IsAI:       false,
+			case "chat":
+				<-state.done
+				state.signAndPublish(env.SenderName, env.Content, false)
+				state.batcher.Add(ai.ChatMessage{
+					SenderName: env.SenderName, Content: env.Content, IsAI: false,
 				})
 
 			case "persona":
-				orchestrator.SetPersona(ai.Persona{
-					Name:  env.AIName,
-					Style: env.AIStyle,
-					Model: env.AIModel,
+				<-state.done
+				state.orch.SetPersona(ai.Persona{
+					Name: env.AIName, Style: env.AIStyle, Model: env.AIModel,
 				})
-				log.Printf("[AI] Persona updated: name=%q style=%q model=%q",
-					env.AIName, env.AIStyle, env.AIModel)
 
 			case "force_reply":
-				log.Println("[AI] Force reply requested")
-				batcher.ForceFlush()
+				<-state.done
+				state.batcher.ForceFlush()
 			}
 		}
 	})
@@ -221,6 +301,115 @@ func main() {
 	http.Handle("/", http.FileServer(http.FS(web.Content)))
 
 	addr := fmt.Sprintf(":%d", *port)
-	log.Printf("Web UI → http://localhost%s", addr)
+	log.Printf("Server → http://localhost%s", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
+
+// ── Ollama proxy handlers ──
+
+const ollamaBase = "http://localhost:11434"
+
+func handleOllamaStatus(w http.ResponseWriter, r *http.Request) {
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(ollamaBase + "/api/tags")
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]any{"running": false, "error": err.Error()})
+		return
+	}
+	resp.Body.Close()
+	json.NewEncoder(w).Encode(map[string]any{"running": true})
+}
+
+func handleModels(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		resp, err := http.Get(ollamaBase + "/api/tags")
+		if err != nil {
+			http.Error(w, err.Error(), 502)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", "application/json")
+		io.Copy(w, resp.Body)
+
+	case http.MethodDelete:
+		var body struct{ Name string `json:"name"` }
+		json.NewDecoder(r.Body).Decode(&body)
+		reqBody, _ := json.Marshal(body)
+		req, _ := http.NewRequest(http.MethodDelete, ollamaBase+"/api/delete", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			http.Error(w, err.Error(), 502)
+			return
+		}
+		defer resp.Body.Close()
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+
+	default:
+		http.Error(w, "method not allowed", 405)
+	}
+}
+
+func handleModelPull(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", 405)
+		return
+	}
+	var body struct{ Name string `json:"name"` }
+	json.NewDecoder(r.Body).Decode(&body)
+
+	reqBody, _ := json.Marshal(map[string]any{"name": body.Name, "stream": true})
+	resp, err := http.Post(ollamaBase+"/api/pull", "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		http.Error(w, err.Error(), 502)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, ok := w.(http.Flusher)
+
+	buf := make([]byte, 4096)
+	for {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			fmt.Fprintf(w, "data: %s\n\n", buf[:n])
+			if ok {
+				flusher.Flush()
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+}
+
+func handleRecommended(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(recommendedModels)
+}
+
+func (s *appState) handleMemory(w http.ResponseWriter, r *http.Request) {
+	if s.memStore == nil {
+		json.NewEncoder(w).Encode([]ai.Memory{})
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(s.memStore.All())
+	case http.MethodDelete:
+		id := r.URL.Query().Get("id")
+		if id != "" {
+			s.memStore.Delete(id)
+		}
+		w.WriteHeader(204)
+	default:
+		http.Error(w, "method not allowed", 405)
+	}
+}
+
