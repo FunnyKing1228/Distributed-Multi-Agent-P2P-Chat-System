@@ -14,13 +14,15 @@ type Message struct {
 	SenderID    string            `json:"sender_id"`
 	SenderName  string            `json:"sender_name"`
 	Content     string            `json:"content"`
+	Mentions    []string          `json:"mentions,omitempty"`
+	MentionAll  bool              `json:"mention_all,omitempty"`
 	VectorClock map[string]uint64 `json:"vector_clock"`
 	PrevHash    string            `json:"prev_hash"`
 	Signature   string            `json:"signature"`
 	IsAI        bool              `json:"is_ai"`
 }
 
-func NewMessage(senderID, senderName, content string, vc map[string]uint64, prevHash string, isAI bool) *Message {
+func NewMessage(senderID, senderName, content string, mentions []string, mentionAll bool, vc map[string]uint64, prevHash string, isAI bool) *Message {
 	vcCopy := make(map[string]uint64, len(vc))
 	for k, v := range vc {
 		vcCopy[k] = v
@@ -30,6 +32,8 @@ func NewMessage(senderID, senderName, content string, vc map[string]uint64, prev
 		SenderID:    senderID,
 		SenderName:  senderName,
 		Content:     content,
+		Mentions:    append([]string(nil), mentions...),
+		MentionAll:  mentionAll,
 		VectorClock: vcCopy,
 		PrevHash:    prevHash,
 		IsAI:        isAI,
@@ -43,6 +47,8 @@ func (m *Message) SignableBytes() ([]byte, error) {
 		SenderID    string            `json:"sender_id"`
 		SenderName  string            `json:"sender_name"`
 		Content     string            `json:"content"`
+		Mentions    []string          `json:"mentions,omitempty"`
+		MentionAll  bool              `json:"mention_all,omitempty"`
 		VectorClock map[string]uint64 `json:"vector_clock"`
 		PrevHash    string            `json:"prev_hash"`
 		IsAI        bool              `json:"is_ai"`
@@ -51,6 +57,8 @@ func (m *Message) SignableBytes() ([]byte, error) {
 		SenderID:    m.SenderID,
 		SenderName:  m.SenderName,
 		Content:     m.Content,
+		Mentions:    m.Mentions,
+		MentionAll:  m.MentionAll,
 		VectorClock: m.VectorClock,
 		PrevHash:    m.PrevHash,
 		IsAI:        m.IsAI,

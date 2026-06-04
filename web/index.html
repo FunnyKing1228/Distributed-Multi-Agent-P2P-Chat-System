@@ -34,15 +34,17 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Ro
 .card h2{font-size:13px;text-transform:uppercase;letter-spacing:1.5px;color:var(--accent);margin-bottom:16px;font-weight:600}
 .row{display:flex;gap:14px}
 .row>.field{flex:1}
+.field-hint{font-size:12px;color:var(--muted);line-height:1.4;margin-bottom:8px}
 .range-row{display:flex;align-items:center;gap:12px}
 .range-row input[type=range]{flex:1;accent-color:var(--accent)}
-.range-row .val{font-size:14px;color:var(--accent);min-width:60px;text-align:right}
+.range-row .val{font-size:14px;color:var(--accent);min-width:50px;text-align:right}
+.range-labels{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-top:4px;opacity:.7}
 
 /* Ollama status */
 .status-dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}
 .status-dot.on{background:var(--green)}.status-dot.off{background:var(--accent2)}
 
-/* Model list */
+/* Installed model list */
 .model-list{margin-top:12px}
 .model-item{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--bg);border-radius:8px;margin-bottom:8px;font-size:13px}
 .model-item .name{font-weight:600;flex:1}
@@ -52,9 +54,62 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Ro
 .btn-download{background:var(--accent);color:#fff}
 .btn-installed{background:#ffffff10;color:var(--green);cursor:default}
 .btn-delete{background:#ffffff10;color:var(--accent2)}
-.progress-bar{height:4px;background:#ffffff10;border-radius:2px;margin-top:8px;overflow:hidden;display:none}
+
+/* Recommended model cards */
+.model-card{background:var(--bg);border:1px solid #ffffff10;border-radius:10px;padding:16px;margin-bottom:10px;transition:border-color .2s}
+.model-card:hover{border-color:var(--accent)}
+.model-card.best{border-color:var(--accent);box-shadow:0 0 12px #6c63ff20}
+.model-header{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.model-header .name{font-weight:700;font-size:15px}
+.badge-best{font-size:10px;background:var(--accent);color:#fff;padding:2px 8px;border-radius:10px;text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+.model-desc{font-size:12.5px;color:var(--muted);line-height:1.5;margin-bottom:10px}
+.model-meta{display:flex;gap:14px;font-size:12px;color:var(--muted);margin-bottom:8px;flex-wrap:wrap}
+.model-meta span{background:#ffffff08;padding:2px 8px;border-radius:4px}
+.rp-score{color:#ffc107!important;background:transparent!important;padding:0!important}
+.model-tags{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.model-tags .tag{font-size:11px;color:var(--accent);background:#6c63ff15;padding:2px 8px;border-radius:10px}
+.model-action{display:flex;justify-content:flex-end}
+.model-action button{padding:8px 20px;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;transition:opacity .2s}
+.model-action button:hover{opacity:.85}
+.model-action .btn-download{background:var(--accent);color:#fff}
+.model-action .btn-installed{background:#ffffff10;color:var(--green);cursor:default}
+
+.progress-bar{height:4px;background:#ffffff10;border-radius:2px;margin-top:8px;overflow:hidden}
 .progress-bar .fill{height:100%;background:var(--accent);transition:width .3s;width:0}
-#pull-status{font-size:12px;color:var(--muted);margin-top:6px;min-height:18px}
+#pull-status a{color:var(--accent)}
+#pull-status code{background:#ffffff10;padding:2px 6px;border-radius:4px;font-size:11px}
+
+/* Inline model download progress */
+.inline-progress{margin-top:8px}
+.inline-progress .progress-bar{display:block}
+
+/* Pagination */
+.page-nav{display:flex;align-items:center;justify-content:center;gap:16px;margin-top:12px;padding:8px 0}
+.pn-btn{background:transparent;border:1px solid #ffffff20;color:var(--text);padding:6px 16px;border-radius:6px;cursor:pointer;font-size:13px;transition:all .2s}
+.pn-btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.pn-btn:disabled{opacity:.3;cursor:default}
+.pn-info{font-size:13px;color:var(--muted)}
+
+/* Persona gallery */
+#persona-gallery{display:flex;flex-direction:column;gap:8px}
+.persona-card{display:flex;align-items:center;gap:14px;padding:14px 16px;background:var(--bg);border:2px solid transparent;border-radius:10px;cursor:pointer;transition:all .2s}
+.persona-card:hover{border-color:#ffffff20}
+.persona-card.selected{border-color:var(--accent);background:#6c63ff10}
+.persona-avatar{width:42px;height:42px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#fff;flex-shrink:0}
+.persona-card.selected .persona-avatar{background:var(--accent)}
+.persona-info{flex:1;min-width:0}
+.persona-info .pname{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.persona-info .pstyle{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.persona-info .pmodel{font-size:11px;color:var(--accent);margin-top:2px}
+.persona-actions{display:flex;gap:4px;flex-shrink:0}
+.persona-actions button{background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:4px 6px;border-radius:4px;transition:color .2s}
+.persona-actions button:hover{color:var(--text);background:#ffffff10}
+.persona-actions .del:hover{color:var(--accent2)}
+.btn-outline{padding:10px 16px;background:transparent;border:1px solid #ffffff20;color:var(--text);border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;transition:all .2s}
+.btn-outline:hover{border-color:var(--accent);color:var(--accent)}
+.btn-accent{padding:10px 16px;background:var(--accent);border:none;color:#fff;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;transition:opacity .2s}
+.btn-accent:hover{opacity:.85}
+.no-personas{text-align:center;padding:20px;color:var(--muted);font-size:13px}
 
 /* Join button */
 #btn-join{
@@ -81,6 +136,45 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Ro
 #btn-force-reply:hover{opacity:.85}
 #sidebar footer{margin-top:auto;padding:16px 20px;border-top:1px solid #ffffff10;font-size:12px;color:var(--muted)}
 #peer-count{color:var(--accent)}
+.member-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #ffffff08;font-size:13px}
+.member-item .member-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.member-item .member-dot.human{background:var(--accent)}
+.member-item .member-dot.ai{background:var(--green)}
+.member-item .member-name{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.member-item .member-tag{font-size:10px;padding:1px 6px;border-radius:8px;flex-shrink:0}
+.member-item .member-tag.you{background:#6c63ff30;color:var(--accent)}
+.member-item .member-tag.ai{background:#4caf5030;color:var(--green)}
+.diagnostics{font-size:12px;color:var(--muted);line-height:1.7}
+.diagnostics .diag-row{display:flex;justify-content:space-between;gap:10px;border-bottom:1px solid #ffffff08;padding:4px 0}
+.diagnostics .diag-row span:last-child{color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-align:right;overflow:hidden;text-overflow:ellipsis}
+.diagnostics .diag-note{margin-top:8px;font-size:11px;line-height:1.4;color:var(--muted)}
+.attack-lab{padding:0 20px 12px}
+.attack-lab .attack-grid{display:grid;grid-template-columns:1fr;gap:6px;margin-top:8px}
+.attack-btn{padding:8px 9px;background:transparent;color:var(--accent2);border:1px solid var(--accent2);border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;transition:all .2s;text-align:left}
+.attack-btn:hover{background:var(--accent2);color:#fff}
+.attack-btn:disabled{opacity:.55;cursor:wait}
+.attack-result{margin-top:8px;padding:8px;border:1px solid #ffffff12;border-radius:8px;background:#ffffff06;font-size:11px;line-height:1.45;color:var(--muted);white-space:pre-wrap}
+.attack-result strong{color:var(--text)}
+.attack-result pre{margin:6px 0 0;padding:7px;background:#00000024;border-radius:6px;overflow:auto;max-height:150px;color:var(--text);font-size:10px}
+.trace-panel{padding:0 20px 12px}
+.trace-log{margin-top:8px;max-height:260px;overflow:auto;border:1px solid #ffffff12;border-radius:8px;background:#05070d;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10.5px;line-height:1.45}
+.trace-item{padding:8px;border-bottom:1px solid #ffffff0c;color:var(--muted)}
+.trace-item:last-child{border-bottom:none}
+.trace-item.accept{border-left:3px solid var(--green)}
+.trace-item.drop{border-left:3px solid var(--accent2)}
+.trace-head{display:flex;justify-content:space-between;gap:8px;color:var(--text);margin-bottom:5px}
+.trace-pill{font-weight:700;text-transform:uppercase}
+.trace-item.accept .trace-pill{color:var(--green)}
+.trace-item.drop .trace-pill{color:var(--accent2)}
+.trace-summary{margin-bottom:5px;color:var(--muted);white-space:pre-wrap}
+.trace-step{white-space:pre-wrap;color:#d8dcff}
+.manual-peer{padding:0 20px 12px;font-size:11px;color:var(--muted)}
+.manual-peer textarea,.manual-peer input{width:100%;box-sizing:border-box;margin-top:6px;background:#0d1324;border:1px solid #ffffff18;border-radius:8px;color:var(--text);padding:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;resize:vertical}
+.manual-peer textarea{min-height:58px;max-height:105px}
+.manual-peer .peer-actions{display:flex;gap:6px;margin-top:6px}
+.manual-peer button{flex:1;padding:7px;border-radius:7px;border:1px solid var(--accent);background:transparent;color:var(--accent);font-size:11px;font-weight:700;cursor:pointer}
+.manual-peer button:hover{background:var(--accent);color:#fff}
+.peer-status{margin-top:6px;min-height:14px;color:var(--muted)}
 .memory-item{display:flex;align-items:flex-start;gap:8px;padding:8px 0;border-bottom:1px solid #ffffff08;font-size:12px;line-height:1.4}
 .memory-item .fact{flex:1;color:var(--text)}
 .memory-item button{background:none;border:none;color:var(--accent2);cursor:pointer;font-size:14px;padding:2px 4px;flex-shrink:0}
@@ -92,6 +186,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Ro
 #topbar h1{font-size:16px;font-weight:600}
 #topbar .spacer{flex:1}
 #status{font-size:12px;color:var(--muted)}
+#btn-leave{background:transparent;border:1px solid var(--accent2);color:var(--accent2);padding:5px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;transition:all .2s}
+#btn-leave:hover{background:var(--accent2);color:#fff}
 #room-badge{font-size:12px;background:var(--accent);color:#fff;padding:3px 10px;border-radius:12px}
 
 #chat{flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:6px}
@@ -106,9 +202,27 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Ro
 .msg.self .bubble{background:var(--bubble-self);border-bottom-right-radius:4px}
 .msg.other .bubble{background:var(--bubble-other);border-bottom-left-radius:4px}
 .msg.ai .bubble{background:var(--bubble-ai);border-left:3px solid var(--green)}
+.msg.streaming .bubble{border-left-color:#ff9800;opacity:.85}
+.thinking-indicator .bubble{color:var(--muted)!important;font-style:italic}
+.thinking-dots span{animation:blink 1.4s infinite both;font-weight:700;font-size:18px}
+.thinking-dots span:nth-child(2){animation-delay:.2s}
+.thinking-dots span:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,80%,100%{opacity:.2}40%{opacity:1}}
 .msg.system .bubble{background:transparent;color:var(--muted);font-size:12px;text-align:center;padding:6px}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 
+#activity-bar{min-height:0;padding:0 20px;font-size:12px;color:var(--muted);font-style:italic;transition:all .2s;overflow:hidden}
+#activity-bar:not(:empty){min-height:24px;padding:4px 20px}
+#activity-bar .typing-dot{display:inline-block;width:4px;height:4px;border-radius:50%;background:var(--accent);margin-right:2px;animation:blink 1.4s infinite both}
+#activity-bar .typing-dot:nth-child(2){animation-delay:.2s}
+#activity-bar .typing-dot:nth-child(3){animation-delay:.4s}
+#main{position:relative}
+#mention-menu{position:relative;margin:0 20px 8px;max-height:180px;overflow-y:auto;background:var(--surface);border:1px solid #ffffff12;border-radius:12px;box-shadow:0 12px 30px #00000055;padding:6px;z-index:5}
+#mention-menu.hidden{display:none!important}
+.mention-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;font-size:13px}
+.mention-item:hover,.mention-item.active{background:#ffffff10}
+.mention-item .mention-name{flex:1}
+.mention-item .mention-kind{font-size:11px;color:var(--muted)}
 #input-bar{display:flex;align-items:center;gap:10px;padding:14px 20px;background:var(--surface);border-top:1px solid #ffffff10}
 #msg-input{flex:1;padding:12px 16px;background:var(--bg);border:1px solid #ffffff15;border-radius:24px;color:var(--text);font-size:14px;outline:none;transition:border .2s}
 #msg-input:focus{border-color:var(--accent)}
@@ -147,28 +261,50 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Ro
         <div id="installed-list"></div>
         <h3 style="font-size:12px;color:var(--muted);margin:16px 0 8px;text-transform:uppercase;letter-spacing:1px">Recommended Models</h3>
         <div id="recommended-list"></div>
-        <div class="progress-bar" id="pull-progress"><div class="fill" id="pull-fill"></div></div>
-        <div id="pull-status"></div>
+      </div>
+      <div id="ollama-install-progress" style="margin-top:12px;display:none">
+        <div class="progress-bar" id="pull-progress" style="display:block"><div class="fill" id="pull-fill"></div></div>
+        <div id="pull-status" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
       </div>
     </div>
 
     <div class="card">
       <h2>AI Persona</h2>
-      <div class="row">
-        <div class="field"><label>AI Name</label><input id="s-ai-name" type="text" placeholder="e.g. Jarvis" maxlength="30"></div>
-        <div class="field">
-          <label>Model</label>
-          <select id="s-ai-model"><option value="">— select after install —</option></select>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:12px">Choose a saved persona or create a new one to bring into the room.</p>
+      <div id="persona-gallery"></div>
+      <button id="btn-new-persona" class="btn-outline" style="width:100%;margin-top:8px">+ Create New Persona</button>
+
+      <div id="persona-editor" class="hidden" style="margin-top:16px;padding-top:16px;border-top:1px solid #ffffff10">
+        <h3 style="font-size:12px;color:var(--accent);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px" id="editor-title">New Persona</h3>
+        <div class="row">
+          <div class="field"><label>AI Name</label><input id="s-ai-name" type="text" placeholder="e.g. Jarvis" maxlength="30"></div>
+          <div class="field">
+            <label>Model</label>
+            <select id="s-ai-model"><option value="">— select after install —</option></select>
+          </div>
         </div>
-      </div>
-      <div class="field"><label>Personality</label><textarea id="s-ai-style" rows="2" placeholder="e.g. Sarcastic but helpful, loves sports..."></textarea></div>
-      <div class="field">
-        <label>Memory Limit</label>
-        <div class="range-row"><input type="range" id="s-mem-limit" min="10" max="200" value="50"><span class="val" id="s-mem-val">50 facts</span></div>
-      </div>
-      <div class="field">
-        <label>Context Window (num_ctx)</label>
-        <div class="range-row"><input type="range" id="s-num-ctx" min="512" max="8192" step="512" value="4096"><span class="val" id="s-ctx-val">4096</span></div>
+        <div class="field"><label>Personality / Backstory</label><textarea id="s-ai-style" rows="3" placeholder="e.g. A sarcastic butler who secretly loves anime. Always ends sentences with a witty remark."></textarea></div>
+        <div class="field">
+          <label>Long-term Memory</label>
+          <p class="field-hint">AI can remember facts about you across conversations. More = better recall, but uses more storage.</p>
+          <div class="range-row"><input type="range" id="s-mem-limit" min="10" max="200" value="50"><span class="val" id="s-mem-val">50</span></div>
+          <div class="range-labels"><span>10 — Forgetful</span><span>200 — Remembers everything</span></div>
+        </div>
+        <div class="field">
+          <label>Conversation Awareness</label>
+          <p class="field-hint">How many recent messages the AI can "see" when replying. Higher = smarter but slower and uses more RAM.</p>
+          <div class="range-row"><input type="range" id="s-num-ctx" min="512" max="8192" step="512" value="4096"><span class="val" id="s-ctx-val">4096</span></div>
+          <div class="range-labels"><span>512 — Fast, short memory</span><span>8192 — Slow, reads entire chat</span></div>
+        </div>
+        <div id="persona-memory-section" class="hidden" style="margin-top:12px;padding-top:12px;border-top:1px solid #ffffff10">
+          <label style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">Stored Memories</label>
+          <p class="field-hint">Facts this persona remembers. You can delete individual memories.</p>
+          <div id="memory-list" style="max-height:160px;overflow-y:auto;margin-top:8px"></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button id="btn-save-persona" class="btn-accent" style="flex:1">Save Persona</button>
+          <button id="btn-cancel-persona" class="btn-outline" style="flex:1">Cancel</button>
+        </div>
       </div>
     </div>
 
@@ -181,19 +317,73 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Ro
   <div id="app">
     <aside id="sidebar">
       <header>
-        <h2>Chat Info</h2>
+        <h2>Chat Room</h2>
         <div style="font-size:13px;color:var(--muted)">Room: <span id="chat-room" style="color:var(--accent)"></span></div>
         <div style="font-size:13px;color:var(--muted);margin-top:4px">You: <span id="chat-name" style="color:var(--text)"></span></div>
       </header>
-      <div class="section-title">AI Persona</div>
-      <div class="section-body">
-        <div class="field"><label>AI Name</label><input id="ai-name" type="text" maxlength="30"></div>
-        <div class="field"><label>Personality</label><textarea id="ai-style" rows="2"></textarea></div>
-        <div class="field"><label>Model</label><select id="ai-model"></select></div>
+      <div class="section-title">Members</div>
+      <div class="section-body" id="member-list"></div>
+      <div class="section-title">Tailscale / Manual Peer</div>
+      <div class="manual-peer">
+        <div class="diag-note">Use this when mDNS cannot discover peers across machines. Start both nodes with fixed <code>-p2p-port</code>, copy one multiaddr to the other computer, then connect.</div>
+        <label>My multiaddr</label>
+        <textarea id="peer-addrs" readonly placeholder="Join a room to generate peer address"></textarea>
+        <div class="peer-actions">
+          <button id="btn-refresh-peer" type="button">Refresh</button>
+          <button id="btn-copy-peer" type="button">Copy</button>
+        </div>
+        <label>Remote multiaddr</label>
+        <input id="peer-connect-input" type="text" placeholder="/ip4/100.x.x.x/tcp/9000/p2p/12D3..." autocomplete="off">
+        <div class="peer-actions">
+          <button id="btn-connect-peer" type="button">Connect Peer</button>
+        </div>
+        <div id="peer-connect-status" class="peer-status"></div>
+      </div>
+      <div class="section-title">Distributed State</div>
+      <div class="section-body diagnostics">
+        <div class="diag-row"><span>Messages</span><span id="diag-messages">0</span></div>
+        <div class="diag-row"><span>Verified</span><span id="diag-verified">0</span></div>
+        <div class="diag-row"><span>Rejected</span><span id="diag-rejected">0</span></div>
+        <div class="diag-row"><span>Rate Limited</span><span id="diag-rate-limited">0</span></div>
+        <div class="diag-row"><span>Repaired</span><span id="diag-repaired">0</span></div>
+        <div class="diag-row"><span>Duplicates</span><span id="diag-duplicates">0</span></div>
+        <div class="diag-row"><span>Equivocation</span><span id="diag-equivocation">0</span></div>
+        <div class="diag-row"><span>Clock Back</span><span id="diag-clock-back">0</span></div>
+        <div class="diag-row"><span>Quarantined</span><span id="diag-quarantined">0</span></div>
+        <div class="diag-row"><span>Sync</span><span id="diag-sync">idle</span></div>
+        <div class="diag-row"><span>Clock</span><span id="diag-clock">∅</span></div>
+        <div class="diag-row"><span>Time</span><span id="diag-time">Vector Clock</span></div>
+        <div class="diag-row"><span>Last Reject</span><span id="diag-last-reject">none</span></div>
+        <div class="diag-note">No physical clock sync required. Causal order comes from vector-clock merge; forged messages are rejected before ledger/UI/AI.</div>
       </div>
       <button id="btn-force-reply">Force Reply</button>
-      <div class="section-title">AI Memories</div>
-      <div class="section-body" id="memory-list" style="max-height:200px;overflow-y:auto"></div>
+      <div class="section-title">Attack Lab</div>
+      <div class="attack-lab">
+        <div class="diag-note">Demo protocol-layer fake messages. Expected rejects show on the receiving peer's diagnostics.</div>
+        <div class="diag-note"><strong>Core demo</strong></div>
+        <div class="attack-grid">
+          <button class="attack-btn" data-attack="tamper_content">Tamper Signed Content</button>
+          <button class="attack-btn" data-attack="replay_message">Replay Last Valid Message</button>
+          <button class="attack-btn" data-attack="flood_spam">Flood Spam Burst</button>
+        </div>
+        <div class="diag-note"><strong>Advanced demo</strong></div>
+        <div class="attack-grid">
+          <button class="attack-btn" data-attack="spoof_sync">Spoof Sync Identity</button>
+          <button class="attack-btn" data-attack="malformed_payload">Send Malformed Payload</button>
+          <button class="attack-btn" data-attack="forged_sync">Forged Sync Response</button>
+          <button class="attack-btn" data-attack="missing_sender_clock">Missing Sender Clock</button>
+          <button class="attack-btn" data-attack="clock_regression">Clock Regression</button>
+          <button class="attack-btn" data-attack="equivocation_fork">Equivocation Fork</button>
+        </div>
+        <div id="attack-result" class="attack-result">Choose an attack to see the defense result.</div>
+      </div>
+      <div class="section-title">Security Trace</div>
+      <div class="trace-panel">
+        <div class="diag-note">Honest peers expose the real validation path: receive → parse → hash/signature → ledger/trust decision.</div>
+        <div id="security-trace" class="trace-log">
+          <div class="trace-item"><div class="trace-summary">Waiting for packets...</div></div>
+        </div>
+      </div>
       <footer>Peers connected: <span id="peer-count">0</span></footer>
     </aside>
     <section id="main">
@@ -203,16 +393,19 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Ro
         <div class="spacer"></div>
         <span id="room-badge"></span>
         <span id="status">Connecting...</span>
+        <button id="btn-leave" title="Leave Room">Leave</button>
       </div>
       <div id="chat"></div>
+      <div id="activity-bar"></div>
+      <div id="mention-menu" class="hidden"></div>
       <div id="input-bar">
-        <input id="msg-input" type="text" placeholder="Type a message..." autocomplete="off" disabled>
+        <input id="msg-input" type="text" placeholder="Type a message... try @Alan or @all" autocomplete="off" disabled>
         <button id="btn-send" disabled>Send</button>
       </div>
     </section>
   </div>
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=security-trace-1"></script>
 </body>
 </html>

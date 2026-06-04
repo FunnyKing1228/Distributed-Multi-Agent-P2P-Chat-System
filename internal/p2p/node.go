@@ -14,6 +14,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
+	ma "github.com/multiformats/go-multiaddr"
 )
 
 const mdnsServiceTag = "ntu-chat-room"
@@ -25,12 +26,16 @@ type Node struct {
 	mu    sync.RWMutex
 }
 
-// NewNode creates a libp2p host bound to a random TCP port and starts mDNS discovery.
+// NewNode creates a libp2p host and starts mDNS discovery.
 // Noise is set as the preferred security transport to avoid TLS simultaneous-dial conflicts.
-func NewNode(ctx context.Context, privKey libp2pcrypto.PrivKey) (*Node, error) {
+func NewNode(ctx context.Context, privKey libp2pcrypto.PrivKey, p2pPort int) (*Node, error) {
+	listenAddr := "/ip4/0.0.0.0/tcp/0"
+	if p2pPort > 0 {
+		listenAddr = fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", p2pPort)
+	}
 	h, err := libp2p.New(
 		libp2p.Identity(privKey),
-		libp2p.ListenAddrStrings("/ip4/0.0.0.0/tcp/0"),
+		libp2p.ListenAddrStrings(listenAddr),
 		libp2p.Security(noise.ID, noise.New),
 	)
 	if err != nil {
@@ -83,4 +88,39 @@ func (n *Node) PeerCount() int {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	return len(n.peers)
+}
+
+func (n *Node) AddrStrings() []string {
+	addrs := n.Host.Addrs()
+	out := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		out = append(out, fmt.Sprintf("%s/p2p/%s", addr.String(), n.Host.ID().String()))
+	}
+	return out
+}
+
+func (n *Node) ConnectMultiaddr(raw string) error {
+	addr, err := ma.NewMultiaddr(raw)
+	if err != nil {
+		return fmt.Errorf("parse multiaddr: %w", err)
+	}
+	info, err := peer.AddrInfoFromP2pAddr(addr)
+	if err != nil {
+		return fmt.Errorf("parse peer info: %w", err)
+	}
+	if info.ID == n.Host.ID() {
+		return fmt.Errorf("cannot connect to self")
+	}
+	if err := n.Host.Connect(n.ctx, *info); err != nil {
+		return fmt.Errorf("connect peer: %w", err)
+	}
+	n.mu.Lock()
+	n.peers[info.ID] = struct{}{}
+	n.mu.Unlock()
+	log.Printf("[P2P] Manually connected peer: %s", info.ID)
+	return nil
+}
+
+func (n *Node) Close() error {
+	return n.Host.Close()
 }

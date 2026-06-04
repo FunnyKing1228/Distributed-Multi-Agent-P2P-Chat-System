@@ -5,6 +5,8 @@
 *.so
 *.dylib
 bin/
+dist/
+dmapc
 
 # Test binary
 *.test
